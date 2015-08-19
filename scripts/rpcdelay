@@ -3,16 +3,14 @@
 
 # Measure round-trip rpc delay between two hosts.
 
-# Usage:
-# terminal 1: $ python test_rpc.py --mode server
-# terminal 2: $ python test_rpc.py --mode client
-
+import os
 import coro
 import argparse
 from rpcdelay.rpc import Server, Client, RPC_Remote_Exception
 
-from coro.log import NoFacility
-LOG = NoFacility()
+import coro.log
+
+LOG = coro.log.NoFacility()
 
 class DelayRoot:
 
@@ -27,11 +25,19 @@ def measure (proxy, delay=7, nsamples=10):
         t1 = proxy.timestamp()
         t2 = coro.get_usec()
         samples.append ((t1-t0, t2-t1, t2-t0))
-        if len(samples) > nsamples:
+        if len(samples) >= nsamples:
             LOG ('rpc delay', samples)
             samples = []
 
-def main (args):
+
+# XXX this needs to go into shrapnel!
+def daemonize (nochdir=1, noclose=0):
+    from ctypes import cdll, util
+    libc = cdll.LoadLibrary (util.find_library ('libc'))
+    libc.daemon (nochdir, noclose)
+
+
+def main0 (args):
     if args.mode == 'server':
         root = DelayRoot()
         server = Server (root, ('', args.port))
@@ -40,12 +46,40 @@ def main (args):
         proxy = client.get_proxy()
         coro.spawn (measure, proxy, args.delay, args.nsamples)
 
-p = argparse.ArgumentParser (description="Test the RPC system.")
-p.add_argument ('--mode'     , help='mode'                  , choices=['server' , 'client'])
-p.add_argument ('--port'     , help='server port'           , default=9999)
-p.add_argument ('--ip'       , help='server ip address'     , default='127.0.0.1')
-p.add_argument ('--delay'    , help='time between samples'  , default=7         , type=int, metavar="SECS")
-p.add_argument ('--nsamples' , help='samples per log entry' , default=10        , type=int, metavar="N")
+def main (args):
+    global LOG
 
-coro.spawn (main, p.parse_args())
-coro.event_loop()
+    if args.logfile:
+        logger = coro.log.asn1.Logger (open (args.logfile, 'ab'))
+    else:
+        logger = coro.log.StderrLogger()
+
+    coro.log.set_logger (logger)
+
+    if args.daemon:
+        if not args.logfile:
+            raise ValueError ("--daemon without --logfile")
+        else:
+            daemonize()
+
+    coro.spawn (main0, args)
+
+    LOG ('starting')
+    try:
+        coro.event_loop()
+    except:
+        LOG.exc()
+    finally:
+        LOG ('stopping')
+
+
+p = argparse.ArgumentParser (description="Test the RPC system.")
+p.add_argument ('--mode'     , help='mode', choices=['server' , 'client'])
+p.add_argument ('--port'     , help='server port', default=9999)
+p.add_argument ('--ip'       , help='server ip address', default='127.0.0.1')
+p.add_argument ('--daemon'   , help='run as a daemon', action='store_true')
+p.add_argument ('--logfile'  , help='log to file')
+p.add_argument ('--delay'    , help='time between samples', default=5, type=int, metavar="SECS")
+p.add_argument ('--nsamples' , help='samples per log entry', default=6, type=int, metavar="N")
+
+main (p.parse_args())
