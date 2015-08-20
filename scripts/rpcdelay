@@ -6,7 +6,7 @@
 import os
 import coro
 import argparse
-from rpcdelay.rpc import Server, Client, RPC_Remote_Exception
+from rpcdelay.rpc import Server, Client, RPC_Remote_Exception, Server_Channel
 
 get_usec = coro.tsc_time.get_kernel_usec
 
@@ -19,7 +19,9 @@ class DelayRoot:
     def timestamp (self):
         return get_usec()
 
-def measure (proxy, delay=7, nsamples=10):
+def measure (ch):
+    proxy = ch.get_proxy()
+    addr = ch.addr
     samples = []
     while 1:
         coro.sleep_relative (delay)
@@ -28,7 +30,7 @@ def measure (proxy, delay=7, nsamples=10):
         t2 = get_usec()
         samples.append ((t1-t0, t2-t1, t2-t0))
         if len(samples) >= nsamples:
-            LOG ('rpc delay', samples)
+            LOG ('delay', addr, samples)
             samples = []
 
 # XXX this needs to go into shrapnel!
@@ -37,18 +39,21 @@ def daemonize (nochdir=1, noclose=0):
     libc = cdll.LoadLibrary (util.find_library ('libc'))
     libc.daemon (nochdir, noclose)
 
+def make_channel (*args, **kwargs):
+    ch = Server_Channel (*args, **kwargs)
+    coro.spawn (measure, ch)
+    return ch
 
 def main0 (args):
+    root = DelayRoot()
     if args.mode == 'server':
-        root = DelayRoot()
-        server = Server (root, ('', args.port))
+        server = Server (root, ('', args.port), make_channel)
     else:
-        client = Client ((args.ip, args.port))
-        proxy = client.get_proxy()
-        coro.spawn (measure, proxy, args.delay, args.nsamples)
+        ch = Client ((args.ip, args.port), root=root)
+        coro.spawn (measure, ch)
 
 def main (args):
-    global LOG
+    global LOG, delay, nsamples
 
     if args.logfile:
         logger = coro.log.asn1.Logger (open (args.logfile, 'ab'))
@@ -62,6 +67,9 @@ def main (args):
             raise ValueError ("--daemon without --logfile")
         else:
             daemonize()
+
+    delay = args.delay
+    nsamples = args.nsamples
 
     coro.spawn (main0, args)
 
