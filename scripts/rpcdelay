@@ -8,6 +8,8 @@ import coro
 import argparse
 from rpcdelay.rpc import Server, Client, RPC_Remote_Exception
 
+get_usec = coro.tsc_time.get_kernel_usec
+
 import coro.log
 
 LOG = coro.log.NoFacility()
@@ -15,20 +17,19 @@ LOG = coro.log.NoFacility()
 class DelayRoot:
 
     def timestamp (self):
-        return coro.get_usec()
+        return get_usec()
 
 def measure (proxy, delay=7, nsamples=10):
     samples = []
     while 1:
         coro.sleep_relative (delay)
-        t0 = coro.get_usec()
+        t0 = get_usec()
         t1 = proxy.timestamp()
-        t2 = coro.get_usec()
+        t2 = get_usec()
         samples.append ((t1-t0, t2-t1, t2-t0))
         if len(samples) >= nsamples:
             LOG ('rpc delay', samples)
             samples = []
-
 
 # XXX this needs to go into shrapnel!
 def daemonize (nochdir=1, noclose=0):
